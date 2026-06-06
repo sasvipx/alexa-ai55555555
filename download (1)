@@ -1,0 +1,316 @@
+import { useState, useRef } from "react";
+import { Sparkles, HelpCircle, Laptop, Cpu, Radio, ShieldCheck, Heart, AlertTriangle } from "lucide-react";
+import EchoDot from "./components/EchoDot";
+import SkillWizard from "./components/SkillWizard";
+import { ChatMessage, EchoState, SkillConfig, SkillOutput } from "./types";
+
+export default function App() {
+  const [chatState, setChatState] = useState<EchoState>("idle");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
+  const [isGeneratingSkill, setIsGeneratingSkill] = useState(false);
+  const [skillOutput, setSkillOutput] = useState<SkillOutput | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Send message to Alexa Chat Endpoint
+  const handleSendMessage = async (text: string, useAiVoice: boolean) => {
+    try {
+      setApiError(null);
+      
+      // 1. Add User message to local state
+      const userMessage: ChatMessage = {
+        id: Math.random().toString(36).substring(7),
+        sender: "user",
+        text,
+        timestamp: new Date()
+      };
+      
+      const updatedMessages = [...messages, userMessage];
+      setMessages(updatedMessages);
+      setChatState("processing");
+
+      // 2. Fetch answer from the server
+      const chatResponse = await fetch("/api/alexa/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          history: updatedMessages.slice(-8) // Limit context to last 8 messages
+        })
+      });
+
+      if (!chatResponse.ok) {
+        throw new Error("فشل الخادم في الرد على الرسالة. يرجى التحقق من مفتاح الـ API.");
+      }
+
+      const chatData = await chatResponse.json();
+      if (!chatData.success) {
+        throw new Error(chatData.error || "حدث خطأ غير معروف أثناء توليد الرد.");
+      }
+
+      const alexaAnswer = chatData.text;
+
+      // 3. Add Alexa response to state
+      const alexaMessage: ChatMessage = {
+        id: Math.random().toString(36).substring(7),
+        sender: "alexa",
+        text: alexaAnswer,
+        timestamp: new Date(),
+        isAiVoice: useAiVoice
+      };
+
+      setMessages(prev => [...prev, alexaMessage]);
+
+      // 4. Sythesise AI voice using Gemini 3.1 TTS if requested
+      if (useAiVoice) {
+        setIsGeneratingVoice(true);
+        setChatState("processing"); // keep state active during generation
+
+        try {
+          const ttsResponse = await fetch("/api/alexa/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: alexaAnswer,
+              voiceName: "Kore" // Excellent warm responsive voice
+            })
+          });
+
+          if (!ttsResponse.ok) {
+            console.warn("TTS generation failed, proceeding with visual-only response");
+            setChatState("idle");
+            setIsGeneratingVoice(false);
+            return;
+          }
+
+          const ttsData = await ttsResponse.json();
+          if (ttsData.success && ttsData.audio) {
+            // Play back the base64 audio
+            if (audioRef.current) {
+              audioRef.current.pause();
+            }
+
+            // Cleanly play WAV audio
+            const audioUrl = `data:audio/wav;base64,${ttsData.audio}`;
+            const audio = new Audio(audioUrl);
+            audioRef.current = audio;
+
+            setChatState("speaking");
+            setIsGeneratingVoice(false);
+
+            audio.onended = () => {
+              setChatState("idle");
+            };
+
+            await audio.play();
+          } else {
+            setChatState("idle");
+            setIsGeneratingVoice(false);
+          }
+        } catch (innerTtsError) {
+          console.error("Audio playback error:", innerTtsError);
+          setChatState("idle");
+          setIsGeneratingVoice(false);
+        }
+      } else {
+        setChatState("idle");
+      }
+
+    } catch (error: any) {
+      console.error("Error in message handler:", error);
+      setChatState("idle");
+      setIsGeneratingVoice(false);
+      setApiError(error.message || "حدث خطأ غير متوقع أثناء الاتصال بأليكسا.");
+    }
+  };
+
+  // Generate complete Skill deployment packages & Lambda codes
+  const handleGenerateSkill = async (config: SkillConfig) => {
+    try {
+      setApiError(null);
+      setIsGeneratingSkill(true);
+
+      const response = await fetch("/api/alexa/generate-skill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config)
+      });
+
+      if (!response.ok) {
+        throw new Error("فشل الخادم في توليد كود المهارة المخصصة.");
+      }
+
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || "حدث خطأ غير متوقع أثناء توليد كود المهارة.");
+      }
+
+      setSkillOutput({
+        interactionModel: data.interactionModel,
+        lambdaCode: data.lambdaCode,
+        skillGuide: data.skillGuide,
+        rawText: data.rawText
+      });
+
+      setIsGeneratingSkill(false);
+    } catch (error: any) {
+      console.error("Error generating skill:", error);
+      setIsGeneratingSkill(false);
+      setApiError(error.message || "فشلت عملية توليد المستندات والأكواد.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white" dir="rtl">
+      
+      {/* Top ambient blurred circles */}
+      <div className="absolute top-0 right-1/4 w-96 h-96 bg-blue-900/15 rounded-full blur-[100px] pointer-events-none"></div>
+      <div className="absolute top-20 left-1/4 w-96 h-96 bg-emerald-900/10 rounded-full blur-[100px] pointer-events-none"></div>
+
+      {/* Main Elegant Header */}
+      <header className="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50 px-4 py-4 md:py-5">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* Visual Brand Icon */}
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-emerald-500 flex items-center justify-center shadow-lg relative overflow-hidden">
+              <span className="absolute inset-[1px] rounded-[15px] bg-slate-950 flex items-center justify-center">
+                <Radio className="w-5 h-5 text-emerald-400 animate-pulse" />
+              </span>
+            </div>
+            <div>
+              <h1 className="text-lg md:text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                <span>مهندس ومحاكي مهارات أليكسا الذكية</span>
+                <span className="text-xs font-semibold px-2 py-0.5 bg-blue-950 border border-blue-800 text-blue-400 rounded-lg">اصدار 5</span>
+              </h1>
+              <p className="text-slate-400 text-xs mt-0.5 font-medium">المنصة العربية المتكاملة لتصميم ومحاكاة مهارات Echo Dot بالذكاء الاصطناعي</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-slate-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              أليكسا متصلة بجهاز Echo Dot 5
+            </span>
+          </div>
+        </div>
+      </header>
+
+      {/* API Key Missing and Error Banners */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6 z-10">
+        
+        {apiError && (
+          <div className="bg-red-950/80 border border-red-900/50 p-4 rounded-2xl flex items-start gap-3 text-red-200">
+            <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-400" />
+            <div className="text-xs text-right">
+              <p className="font-bold mb-1">تنبيه في محرك أليكسا:</p>
+              <p>{apiError}</p>
+              <p className="text-red-400 mt-1">تأكد من إدخال مفتاح الـ API للـ Gemini في إعدادات التطبيق ليعمل توليد الصوت والذكاء الفائق بنجاح.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Info Cards Row */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-4" id="info_features_section">
+          <div className="p-4 bg-slate-900/60 border border-slate-850 rounded-2xl flex items-start gap-3.5">
+            <div className="p-2.5 rounded-xl bg-blue-950 border border-blue-800 text-blue-400">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-200">الذكاء الاصطناعي الفائق (Gemini)</h3>
+              <p className="text-[11px] text-slate-450 mt-1 leading-relaxed text-slate-400">مستوحى من أحدث نماذج الاستجابة السريعة، ليتحدث معك بلغة عربية سلسلة وحكيمة ويبسط لك المسائل المعقدة في ثوانٍ معدودة.</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-900/60 border border-slate-850 rounded-2xl flex items-start gap-3.5">
+            <div className="p-2.5 rounded-xl bg-emerald-950 border border-emerald-800 text-emerald-400">
+              <Laptop className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-200">محاكي Echo Dot 5 الصوتي</h3>
+              <p className="text-[11px] text-slate-450 mt-1 leading-relaxed text-slate-400">تجربة تفاعلية تمكنك من التحدث بميكروفونك وسماع صوت أليكسا الحقيقي بنمط الذكاء والـ LED الدائري التفاعلي المتغير الألوان.</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-900/60 border border-slate-850 rounded-2xl flex items-start gap-3.5">
+            <div className="p-2.5 rounded-xl bg-purple-950 border border-purple-800 text-purple-400">
+              <Cpu className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-200">تصدير برمجي فوري للمهود</h3>
+              <p className="text-[11px] text-slate-450 mt-1 leading-relaxed text-slate-400">احصل على أكواد AWS Lambda و Interaction Model مطابقة لمعايير Alexa Skills باللغة العربية جاهزة للنسخ والرفع لحسابك.</p>
+            </div>
+          </div>
+        </section>
+
+        {/* TWO-COLUMN GRID WORKSPACE */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          
+          {/* Column 1: Echo Dot Simulator Room (Left side) */}
+          <div className="lg:col-span-5 h-full">
+            <EchoDot 
+              chatState={chatState}
+              setChatState={setChatState}
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              isGeneratingVoice={isGeneratingVoice}
+              apiKeyLoaded={true}
+            />
+          </div>
+
+          {/* Column 2: Alexa Custom Skill Builder Room (Right side) */}
+          <div className="lg:col-span-7">
+            <SkillWizard 
+              onGenerateSkill={handleGenerateSkill}
+              isGeneratingSkill={isGeneratingSkill}
+              skillOutput={skillOutput}
+            />
+          </div>
+
+        </section>
+
+        {/* Helpful Walkthrough FAQ & Explanations */}
+        <section className="bg-slate-900/40 border border-slate-850 rounded-3xl p-6" id="faq_section">
+          <h2 className="text-sm font-bold text-slate-200 mb-4 flex items-center gap-2 justify-end">
+            <span>الأسئلة الشائعة وكيفية عمل مهارات أليكسا</span>
+            <HelpCircle className="w-4 h-4 text-slate-400" />
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs leading-relaxed text-slate-400">
+            <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-850">
+              <h3 className="font-bold text-slate-300 mb-1">ما هو جهاز Echo Dot 5؟</h3>
+              <p>هو الجيل الخامس والأحدث من سماعات أمازون أليكسا الذكية، ويتميز بصوت أكثر نقاءً وحساس حرارة مدمج لربط المهارات الذكية وحساس تسارع لتخصيص الحركات الكبستية.</p>
+            </div>
+            
+            <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-850">
+              <h3 className="font-bold text-slate-300 mb-1">كيف أستفيد من الأكواد المولدة بالمنشئ الذكي للغة العربية؟</h3>
+              <p>تمنحك هذه الأكواد البنية التحتية الكاملة لنشر المهارة في Amazon Console. يتضمن ملف JSON لتفسير نية المستخدم وتفاعله مع الميكروفون بداخل جهاز أليكسا بالإضافة لكود AWS Lambda البرمجي.</p>
+            </div>
+
+            <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-850">
+              <h3 className="font-bold text-slate-300 mb-1">كيف تتم عملية التعرف وعرض صوت أليكسا هنا؟</h3>
+              <p>الموقع مدمج بذكاء عالي بالكامل مع نموذج <b>Gemini 3.5 Flash</b> لمعالجة الحوار السريع، ونموذج التعليق الصوتي الفائق <b>Gemini 3.1 Flash TTS Preview</b> لتوليد نطق صوتي عربي مبهج وسلس.</p>
+            </div>
+
+            <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-850">
+              <h3 className="font-bold text-slate-300 mb-1">هل يمكن تثبيت المهارة لتشغيلها على جهازي الحقيقي بالمنزل؟</h3>
+              <p>نعم بالكامل! دليل التثبيت المجاور للأكواد المولدة يشرح لك بدقة كيفية نسخ ملفات المهارة وربطها بحساب المطورين الشخصي لخدمة الأجهزة لتعمل في منزلك مباشرة.</p>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      {/* Footer copyright */}
+      <footer className="mt-12 border-t border-slate-900 bg-slate-950/60 p-6 text-center text-[11px] text-slate-600">
+        <p className="flex items-center justify-center gap-1">
+          <span>صنع بحب للوطن العربي الكبير لتشجيع ابتكار المساعدات الصوتية بالذكاء الفائق</span>
+          <Heart className="w-3 h-3 text-red-500 fill-red-550" />
+        </p>
+        <p className="mt-1 font-mono text-[9px] text-slate-700">Alexa Echo Dot 5 Intel Arabia © 2026</p>
+      </footer>
+
+    </div>
+  );
+}

@@ -1,1 +1,8 @@
-# alexa-ai55555555
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example

@@ -1,0 +1,8 @@
+{
+  "name": "محاكي ومنشئ مهارات أليكسا الذكية 5",
+  "description": "منصة عربية تفاعلية متكاملة لمحاكاة جهاز Alexa Echo Dot 5 بالذكاء الاصطناعي الفائق وتوليد كود المهارات الجاهز للتثبيت",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
